@@ -1,11 +1,7 @@
-import json
 import os, sys, math, time
+import json
 
-os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 import tensorflow as tf
-import logging
-logger = tf.get_logger()
-logger.setLevel(logging.ERROR)
 
 import numpy as np
 import plotly.offline as py
@@ -130,7 +126,7 @@ def shape_data(X, y, data, timesteps=10):
 
     return X, y, data
 
-def build_model():
+def build_model(X):
     # first layer
     model = Sequential()
     model.add(LSTM(32, input_shape=(X.shape[1], X.shape[2]), return_sequences=True))
@@ -155,100 +151,99 @@ def build_model():
 
 
 
+if __name__ == '__main__':
+    hist_dir = 'price_history/'
+    hist_paths = []
+    for path in os.listdir(hist_dir):
+        hist_paths.append(hist_dir+path)
+    hist_paths.sort()
 
 
-hist_dir = 'price_history/'
-hist_paths = []
-for path in os.listdir(hist_dir):
-    hist_paths.append(hist_dir+path)
-hist_paths.sort()
+    c_lst = []
+    for path in hist_paths:
+        with open(path) as file:
+            data = json.load(file)
+        c_lst += data['c']
 
 
-c_lst = []
-for path in hist_paths:
-    with open(path) as file:
-        data = json.load(file)
-    c_lst += data['c']
+    # load and reshape data
+    X, y, data = extract_data(np.array(c_lst))
+    X, y, data = shape_data(X, y, data, timesteps=10)
 
 
-# load and reshape data
-X, y, data = extract_data(np.array(c_lst))
-X, y, data = shape_data(X, y, data, timesteps=10)
+    p = 180
+    X_test = X[-p:]
+    y_test = y[-p:]
+    data_test = data[-p:] 
+
+    # ensure equal number of labels, shuffle, and split
+    X_train, X_val, y_train, y_val = adjust_data(X[:-p], y[:-p])
+
+    # binary encode for softmax function
+    y_train = to_categorical(y_train, 2)
+    y_val   = to_categorical(y_val, 2)
+    # y_test  = to_categorical(y_test, 2)
+
+    X_train = tf.convert_to_tensor(X_train)
+    y_train = tf.convert_to_tensor(y_train)
+    X_val   = tf.convert_to_tensor(X_val  )
+    y_val   = tf.convert_to_tensor(y_val  )
+    X_test  = tf.convert_to_tensor(X_test )
+    y_test  = tf.convert_to_tensor(y_test )
 
 
-p = 180
-X_test = X[-p:]
-y_test = y[-p:]
-data_test = data[-p:] 
-
-# ensure equal number of labels, shuffle, and split
-X_train, X_val, y_train, y_val = adjust_data(X[:-p], y[:-p])
-
-# binary encode for softmax function
-y_train = to_categorical(y_train, 2)
-y_val   = to_categorical(y_val, 2)
-# y_test  = to_categorical(y_test, 2)
-
-X_train = tf.convert_to_tensor(X_train)
-y_train = tf.convert_to_tensor(y_train)
-X_val   = tf.convert_to_tensor(X_val  )
-y_val   = tf.convert_to_tensor(y_val  )
-X_test  = tf.convert_to_tensor(X_test )
-y_test  = tf.convert_to_tensor(y_test )
-
-
-print(X_train.shape)
-print(y_train.shape)
-print(X_val  .shape)
-print(y_val  .shape)
-print(X_test .shape)
-print(y_test .shape)
+    print(X_train.shape)
+    print(y_train.shape)
+    print(X_val  .shape)
+    print(y_val  .shape)
+    print(X_test .shape)
+    print(y_test .shape)
 
 
 
-if sys.argv[1] == 'train':
-    print('Training phase')
-    # build and train model
-    model = build_model()
-    model.fit(X_train, y_train, epochs=10, batch_size=8, shuffle=True, validation_data=(X_val, y_val))
-    model.save('lstm_model')
+    if sys.argv[1] == 'train':
+        print('Training phase')
+        # build and train model
+        model = build_model(X)
+        model.fit(X_train, y_train, epochs=10, batch_size=8, shuffle=True, validation_data=(X_val, y_val))
+        model.save('lstm_model')
 
-if sys.argv[1] == 'test':
-    print('Testing phase')
-    min_model = tf.keras.models.load_model("lstm_model")
+    if sys.argv[1] == 'test':
+        print('Testing phase')
+        min_model = tf.keras.models.load_model("lstm_model")
 
-    y_pred = []
-    annos  = []
-    cnt = 0
-    for i in range(X_test.shape[0]):
-        y = min_model(X_test[i:i+1])[0].numpy()
-        label = np.argmax(y)
-        y_pred.append(label)
-        # score = '%.2f'%(y[label])
-        # annos.append(score)
-        # y_true = str(y_test[i].numpy())
-        # annos.append(y_true)
-        if y_test[i] == 1:
-            annos.append("U")
-        else:
-            annos.append("D")
-        if y_test[i] == label:
-            cnt += 1
+        y_pred = []
+        annos  = []
+        cnt = 0
+        for i in range(X_test.shape[0]):
+            y = min_model(X_test[i:i+1])[0].numpy()
+            label = np.argmax(y)
+            y_pred.append(label)
+            # score = '%.2f'%(y[label])
+            # annos.append(score)
+            # y_true = str(y_test[i].numpy())
+            # annos.append(y_true)
+            if y_test[i] == 1:
+                annos.append("U")
+            else:
+                annos.append("D")
+            if y_test[i] == label:
+                cnt += 1
 
-    acc = cnt/y_test.shape[0]
-    print('Test accuracy: %d%%'%(int(acc*100)))
+        acc = cnt/y_test.shape[0]
+        print('Test accuracy: %d%%'%(int(acc*100)))
 
-    hull20 = mean_hull(data_test,20)
-    plt.plot(hull20,color='darkviolet')
-    plt.plot(data_test,color='b')
-    for i in range(len(y_pred)):
-        if y_pred[i] == 1:
-            color = 'g'
-        else:
-            color = 'r'
-        plt.plot(i,hull20[i],color=color, marker='.')
-        # plt.annotate(annos[i], (i,data_test[i],), xytext=(0,5), 
-        #     textcoords="offset points", ha='center')
-    plt.show()
+        hull20 = mean_hull(data_test,20)
+        plt.plot(hull20,color='darkviolet')
+        plt.plot(data_test,color='b')
+        for i in range(len(y_pred)):
+            if y_pred[i] == 1:
+                color = 'g'
+            else:
+                color = 'r'
+            plt.plot(i,hull20[i],color=color, marker='.')
+            # plt.annotate(annos[i], (i,data_test[i],), xytext=(0,5), 
+            #     textcoords="offset points", ha='center')
+        plt.show()
 
 
